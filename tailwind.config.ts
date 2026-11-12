@@ -15,6 +15,12 @@ export default {
         code: ['monospace'],
       },
       colors: {
+        // Paleta corporativa Chaide: azul de marca #0155B8 (600) y dorado de contraste.
+        brand: {
+          50: '#EEF5FD', 100: '#D7E7FA', 200: '#AFCEF4', 300: '#7CAFEA', 400: '#3F88D9',
+          500: '#176DCB', 600: '#0155B8', 700: '#01469A', 800: '#04397C', 900: '#072D60', 950: '#041C3D',
+        },
+        gold: { 50: '#FEF7EA', 100: '#FDEBC8', 400: '#F7B84A', 500: '#F5A623', 600: '#D98B0B', 700: '#B06C08' },
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         card: {

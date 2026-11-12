@@ -5,9 +5,9 @@
 
 export const environment = {
     production: true,
-    nombreAplicacion: "APP_BASE",
+    nombreAplicacion: "APP_COSTOS_NO_CALIDAD",
 
-    aplicaciones: ["APP_BASE", "APP_CERTIFICADOS_CALIDAD", "APP_IT_ACTIVOS"],
+    aplicaciones: ["APP_COSTOS_NO_CALIDAD"],
 
     basePath: process.env.NEXT_PUBLIC_BASE_PATH || '',
 
@@ -23,7 +23,15 @@ export const environment = {
 
 
     /////////////////////////////////////Api Propia de la Aplicación
+    // Producción (next build): API publicada detrás de Traefik.
+    // Desarrollo (next dev): proxy /api-costos de next.config.ts hacia el API local (mismo origen, sin CORS ni contenido mixto).
+    // NEXT_PUBLIC_API_COSTOS_URL, si se define, tiene prioridad sobre ambos.
+    apiCostosURL:
+        process.env.NEXT_PUBLIC_API_COSTOS_URL ||
+        (process.env.NODE_ENV === 'production'
+            ? 'https://apps.chaide.com/costosNCBA'
+            : `${process.env.NEXT_PUBLIC_BASE_PATH || ''}/api-costos`),
 
 
-    tituloSistema: 'SISTEMA INTEGRADO DE SEGURIDADES',
+    tituloSistema: 'SISTEMA INTEGRADO DE PRODUCTIVIDAD OPERACIONAL (SIPO)',
 };
