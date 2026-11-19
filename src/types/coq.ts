@@ -20,10 +20,18 @@ export interface CoqEstado {
 /** Detalle de una fuente: proceso y, dentro de este, referencia (para el desglose por niveles). */
 export interface ReferenciaTotal { referencia: string; descripcion: string; importe: number }
 export interface ProcesoTotal { proceso: string; importe: number; referencias: ReferenciaTotal[] }
-export interface FuenteTotal { fuente: string; importe: number; excluido?: boolean; procesos: ProcesoTotal[] }
+export interface FuenteTotal {
+  fuente: string; importe: number; excluido?: boolean; procesos: ProcesoTotal[];
+  /** Solo en Control de inventarios (saldo mensual): meses con dato entre los que se promedió el importe. */
+  promedioMeses?: number;
+}
 
 /** Valores de un mes para la comparativa mensual. */
-export interface MesTotals { mes: number; sales: number; prevencion: number; evaluacion: number; fallasInternas: number; fallasExternas: number; total: number }
+export interface MesTotals {
+  mes: number; sales: number; prevencion: number; evaluacion: number; fallasInternas: number; fallasExternas: number; total: number;
+  /** Parte de fallasInternas/total que corresponde a Control de inventarios (saldo del mes). */
+  inventario: number;
+}
 
 export interface YearTotals {
   anio: number;
@@ -35,8 +43,10 @@ export interface YearTotals {
   inversion: number;
   perdida: number;
   total: number;
-  /** Importe de CuboControlInventarios (esté o no incluido en el CoQ). */
+  /** Control de inventarios es un saldo mensual: en un periodo de varios meses es el PROMEDIO de los meses con dato (esté o no incluido en el CoQ). */
   inventario: number;
+  /** Meses con dato de Control de inventarios dentro del periodo (divisor del promedio). */
+  inventarioMeses: number;
   inventarioIncluido: boolean;
   fuentes: Record<Categoria, FuenteTotal[]>;
   porFuente: Record<string, number>;

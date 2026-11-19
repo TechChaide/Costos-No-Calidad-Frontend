@@ -8,18 +8,17 @@ export const CATEGORIAS: { key: Categoria; title: string; color: 'emerald' | 'bl
 ];
 
 /**
- * Fuente nueva del cubo: solo existe desde 2026 (valoración de exceso de inventario contra la meta).
- * Se suma al CoQ por defecto, como en el Excel inicial del proyecto; el usuario puede excluirla
- * para comparar de forma homogénea con años anteriores.
+ * Fuente de control de inventarios del cubo (valoración de exceso de inventario contra la meta).
+ * Hoy el cubo tiene datos desde 2024 (con algunos meses sin carga). Se suma al CoQ por
+ * defecto, como en el Excel inicial del proyecto; el usuario puede excluirla del cálculo.
  */
 export const FUENTE_INVENTARIO = 'CuboControlInventarios';
-export const INVENTARIO_DESDE = 2026;
 
 /** Correspondencia entre las fuentes del cubo y los indicadores del prototipo (ajustable). */
 export const FUENTES_INDICADOR = {
   scrap: ['CuboDesperdiciosBalanzas', 'APP Desperdicios Plástico'],
-  defectos: ['CuboDefectosMaterialNuevo'],
-  eficiencia: ['CuboEficienciaOperativa'],
+  defectos: ['CuboDefectosDevolucionesMuestreos'],
+  eficiencia: ['CuboEficienciaOperativaAgrupado'],
 } as const;
 
 export const BENCHMARKS = {

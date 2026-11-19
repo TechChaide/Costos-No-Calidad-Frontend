@@ -1,22 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import {
-  AlertTriangle, BarChart3, Calculator, CalendarCheck, CalendarRange, CheckCircle2, ChevronDown, ChevronRight, Clock, Database,
+  AlertTriangle, BarChart3, Calculator, CalendarRange, CheckCircle2, ChevronDown, ChevronRight, Database,
   Info, Layers, Loader2, MapPin, PieChart, RefreshCw, Search, ShieldCheck, Target, TrendingDown, TrendingUp, Wallet,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { coqService } from '@/services/coq.service';
 import type { Categoria, CoqEstado, CostoRow, FuenteTotal, MesTotals, VentaRow, YearTotals } from '@/types/coq';
-import { BENCHMARKS, CATEGORIAS, FUENTE_INVENTARIO, INVENTARIO_DESDE, MESES, centroLabel } from '@/lib/coq-config';
-import { computeBenchmarks, computeDiagnostics, computeMeses, computeYear } from '@/lib/coq';
+import { BENCHMARKS, CATEGORIAS, FUENTE_INVENTARIO, MESES, centroLabel } from '@/lib/coq-config';
+import { computeBenchmarks, computeDiagnostics, computeMeses, computeYear, conInventarioPromedio } from '@/lib/coq';
 
 /* ---------------- Formato ---------------- */
 const money = (n: number) => `$${Math.round(n).toLocaleString('es-EC')}`;
 const pct = (n: number, d = 2) => `${(n * 100).toFixed(d)}%`;
-const fechaHora = (ms: number) =>
-  new Date(ms).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-const fechaIso = (s: string) => s.split('-').reverse().join('/'); // yyyy-mm-dd -> dd/mm/yyyy
 
 /* ---------------- Sistema visual ----------------
  * Marca: azul #0155B8 (brand-600) con dorado (gold-500) como acento de contraste.
@@ -54,6 +51,7 @@ export function CoqDashboard() {
 
   const [anio, setAnio] = useState<number | null>(null);
   const [mesHasta, setMesHasta] = useState(12);
+  const [vista, setVista] = useState<'acumulado' | 'mes'>('acumulado'); // acumulado desde enero o solo el mes elegido
   const [incluirInv, setIncluirInv] = useState(true);
   const [centro, setCentro] = useState('todos'); // 'todos' o el código del centro (p. ej. '1000')
   const [tab, setTab] = useState<Tab>('benchmarking');
@@ -138,15 +136,15 @@ export function CoqDashboard() {
     if (anio !== null && mesHasta > maxMesDe(anio)) setMesHasta(maxMesDe(anio));
   }, [anio, mesHasta, maxMesDe]);
 
-  // Centros disponibles: los que tienen costos registrados (hoy 1000 y 2000).
+  // Centros disponibles: los que tienen costos registrados en los datos.
   const centros = useMemo(() => [...new Set(costos.map((c) => c.centro).filter(Boolean))].sort(), [costos]);
   const centroSel = centro !== 'todos' && centros.includes(centro) ? centro : null;
 
   const totalsByYear = useMemo(() => {
     const out: Record<number, YearTotals> = {};
-    years.forEach((y) => { out[y] = computeYear(y, mesHasta, costos, ventas, incluirInv, centroSel); });
+    years.forEach((y) => { out[y] = computeYear(y, mesHasta, costos, ventas, incluirInv, centroSel, vista === 'mes' ? mesHasta : 1); });
     return out;
-  }, [years, mesHasta, costos, ventas, incluirInv, centroSel]);
+  }, [years, mesHasta, vista, costos, ventas, incluirInv, centroSel]);
 
   // Serie mensual de cada año (pestaña de comparativa mensual).
   const mesesByYear = useMemo(() => {
@@ -173,14 +171,12 @@ export function CoqDashboard() {
   const t = totalsByYear[anio];
   const coqRatio = t.sales > 0 ? t.total / t.sales : 0;
   const cumpleCoq = coqRatio <= BENCHMARKS.total_coq_sales;
+  const metaCoq = BENCHMARKS.total_coq_sales;
   const diagnostics = computeDiagnostics(t);
   const benchmarks = computeBenchmarks(t);
-  const periodo = mesHasta === 12 ? `Año ${anio}` : `Ene–${MESES[mesHasta - 1]} ${anio}`;
-  const hayInventario = anio >= INVENTARIO_DESDE && t.inventario > 0;
-  const ultCosto = costos.reduce((m, c) => Math.max(m, c.anio * 100 + c.mes), 0);
-  const mesTxt = (k: number) => (k ? `${MESES[(k % 100) - 1]} ${Math.floor(k / 100)}` : '—');
+  const periodo = vista === 'mes' ? `${MESES[mesHasta - 1]} ${anio}` : mesHasta === 12 ? `Año ${anio}` : `Ene–${MESES[mesHasta - 1]} ${anio}`;
+  const hayInventario = t.inventario > 0;
   const maxMes = maxMesDe(anio);
-  const extraidoAl = estado && estado.costosAl && estado.ventasAl ? Math.min(estado.costosAl, estado.ventasAl) : null;
 
   return (
     <div className="min-h-full bg-slate-50 text-slate-900">
@@ -189,17 +185,10 @@ export function CoqDashboard() {
         <div className="mx-auto max-w-[1440px] px-4 py-5 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
             <div className="flex items-start gap-4">
-              <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm sm:flex">
-                <BarChart3 className="h-6 w-6" />
-              </div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Q-COST 360</h1>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Datos en vivo
-                  </span>
+                  <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Costos de Calidad y No Calidad</h1>
                 </div>
-                <p className="mt-1 text-sm text-slate-500">Costos de calidad y no calidad sobre ventas netas · modelo PAF</p>
               </div>
             </div>
 
@@ -231,7 +220,18 @@ export function CoqDashboard() {
                 </div>
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-xs font-medium text-slate-500">Acumulado a</span>
+                <span className="mb-1.5 block text-xs font-medium text-slate-500">Ver</span>
+                <div className="relative">
+                  <select value={vista} onChange={(e) => setVista(e.target.value as 'acumulado' | 'mes')}
+                    className="h-[38px] w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3 pr-9 text-sm font-medium text-slate-800 shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 sm:w-40">
+                    <option value="acumulado">Acumulado</option>
+                    <option value="mes">Mes individual</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                </div>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-slate-500">{vista === 'mes' ? 'Mes' : 'Acumulado a'}</span>
                 <div className="relative">
                   <select value={mesHasta} onChange={(e) => setMesHasta(Number(e.target.value))}
                     className="h-[38px] w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3 pr-9 text-sm font-medium text-slate-800 shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 sm:w-40">
@@ -251,39 +251,67 @@ export function CoqDashboard() {
             </div>
           </div>
 
-          {/* Vigencia de los datos */}
-          <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
-            <Meta icon={Clock} label="Extraído" value={extraidoAl ? fechaHora(extraidoAl) : '—'} />
-            <Meta icon={TrendingUp} label="Ventas hasta" value={estado?.ventasHasta ? fechaIso(estado.ventasHasta) : '—'} />
-            <Meta icon={Database} label="Costos hasta" value={mesTxt(ultCosto)} />
-            <Meta icon={CalendarCheck} label="Periodo comparable" value={`hasta ${mesTxt(limite)}`} highlight
-              title="Último mes con costos cargados y ventas completas. Los meses posteriores no se pueden seleccionar para no mezclar periodos." />
-            {actualizando && <span className="text-brand-700">Consultando SQL Server…</span>}
-            {errorAct && <span className="text-rose-600">{errorAct}</span>}
-          </div>
+          {/* Estado de la actualización (solo se muestra mientras consulta o si falla) */}
+          {(actualizando || errorAct) && (
+            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
+              {actualizando && <span className="text-brand-700">Consultando SQL Server…</span>}
+              {errorAct && <span className="text-rose-600">{errorAct}</span>}
+            </div>
+          )}
         </div>
       </section>
 
       <div className="mx-auto max-w-[1440px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         {/* ---------- KPIs ---------- */}
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 p-5 text-white shadow-md">
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-[1.25fr_1fr_1fr]">
+          {/* CoQ / Ventas frente a la meta de clase mundial, lado a lado */}
+          <div className="relative flex flex-col justify-center overflow-hidden rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 px-5 py-3.5 text-white shadow-md">
             <div className="absolute inset-x-0 bottom-0 h-1 bg-gold-500" />
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <p className="text-sm font-medium text-brand-100">CoQ / Ventas</p>
-              <Target className="h-5 w-5 text-gold-400" />
-            </div>
-            <p className="mt-2 text-3xl font-bold tabular-nums tracking-tight">{pct(coqRatio)}</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              <span className={`rounded-full px-2 py-0.5 font-semibold ${cumpleCoq ? 'bg-emerald-400/20 text-emerald-100' : 'bg-rose-400/25 text-rose-100'}`}>
+              <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-white px-3 py-1 text-sm font-semibold ${cumpleCoq ? 'text-emerald-700' : 'text-rose-700'}`}>
+                {cumpleCoq ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
                 {cumpleCoq ? 'Dentro de meta' : 'Sobre meta'}
               </span>
-              <span className="text-brand-100">Clase mundial ≤ {pct(BENCHMARKS.total_coq_sales, 1)}</span>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 divide-x divide-white/25">
+              <div className="min-w-0 pr-4">
+                <p className="text-xs font-semibold uppercase tracking-wider text-brand-100">Actual</p>
+                <p className="mt-1 text-4xl font-semibold tracking-tight sm:text-5xl">{pct(coqRatio)}</p>
+              </div>
+              <div className="min-w-0 pl-5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-brand-100">Clase mundial</p>
+                <p className="mt-1 text-4xl font-semibold tracking-tight sm:text-5xl">≤ {pct(metaCoq, 1)}</p>
+              </div>
             </div>
           </div>
-          <Kpi icon={Wallet} label="Ventas totales" value={money(t.sales)} sub={`Ventas netas sin IVA · ${periodo}${centroSel ? ` · ${centroLabel(centroSel)}` : ''}`} />
-          <Kpi icon={Layers} label="Costo total de calidad y no calidad" value={money(t.total)}
-            sub={<><span className="text-emerald-700">Inversión {money(t.inversion)}</span> · <span className="text-rose-700">Fallas {money(t.perdida)}</span></>} />
+
+          <Tile icon={Wallet} label="Ventas totales" value={money(t.sales)}>
+            <p className="text-sm text-slate-500">
+              Ventas netas · {periodo} · {centroSel ? centroLabel(centroSel) : 'Todos los centros'}
+            </p>
+          </Tile>
+
+          <Tile icon={Layers} label="Costo total de calidad y no calidad" value={money(t.total)}>
+            <BarraPartes partes={[
+              { nombre: 'Inversión', valor: t.inversion, clase: 'bg-emerald-500' },
+              { nombre: 'Fallas', valor: t.perdida, clase: 'bg-orange-500' },
+            ]} />
+            <ul className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm">
+              {[
+                { nombre: 'Inversión', detalle: 'prevención + evaluación', valor: t.inversion, clase: 'bg-emerald-500' },
+                { nombre: 'Fallas', detalle: 'internas + externas', valor: t.perdida, clase: 'bg-orange-500' },
+              ].map((r) => (
+                <li key={r.nombre} className="flex items-center gap-2 whitespace-nowrap" title={`${r.nombre}: ${r.detalle}`}>
+                  <i className={`h-2.5 w-2.5 shrink-0 rounded-sm ${r.clase}`} />
+                  <b className="font-semibold text-slate-800">{r.nombre}</b>
+                  <span className="font-semibold text-slate-900">{money(r.valor)}</span>
+                  <span className="text-slate-500">· {pct(t.total > 0 ? r.valor / t.total : 0, 1)}</span>
+                </li>
+              ))}
+            </ul>
+          </Tile>
         </section>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
@@ -326,13 +354,13 @@ export function CoqDashboard() {
                 <div className="flex items-start gap-3">
                   <Info className="mt-0.5 h-5 w-5 shrink-0 text-gold-600" />
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-semibold text-slate-900">Control de inventarios · fuente nueva desde {INVENTARIO_DESDE}</h3>
+                    <h3 className="text-sm font-semibold text-slate-900">Control de inventarios</h3>
                     <p className="mt-1 text-xs leading-relaxed text-slate-600">
-                      Valoración del exceso de inventario contra la meta. Se incluye en el CoQ, pero no existe en años anteriores:
-                      desactívela para comparar de forma homogénea con 2024–2025.
+                      Saldo mensual del exceso de inventario contra la meta: en el CoQ entra como promedio mensual del periodo ({t.inventarioMeses} {t.inventarioMeses === 1 ? 'mes' : 'meses'} con dato), no como suma.
+                      Puede desactivarla para ver el CoQ sin esta fuente.
                     </p>
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold-100 bg-white px-3 py-2.5">
-                      <span className="text-base font-semibold tabular-nums text-gold-700">{money(t.inventario)}</span>
+                      <span className="text-base font-semibold tabular-nums text-gold-700">{money(t.inventario)} <span className="text-xs font-normal text-slate-500">promedio mensual</span></span>
                       <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
                         Incluir en el CoQ
                         <Switch checked={incluirInv} onCheckedChange={setIncluirInv} />
@@ -363,16 +391,16 @@ export function CoqDashboard() {
               ))}
             </div>
 
-            {tab === 'benchmarking' && <Benchmarking t={t} diagnostics={diagnostics} benchmarks={benchmarks} />}
+            {tab === 'benchmarking' && <Benchmarking t={t} diagnostics={diagnostics} benchmarks={benchmarks} periodo={periodo} vista={vista} centro={centroSel ? centroLabel(centroSel) : null} />}
             {tab === 'comparativa' && (
               <Comparativa years={years} totals={totalsByYear} current={anio} onPick={elegirAnio}
-                periodo={mesHasta === 12 ? 'año completo' : `acumulado enero–${MESES[mesHasta - 1].toLowerCase()}`} />
+                periodo={vista === 'mes' ? `${MESES[mesHasta - 1].toLowerCase()} ${anio}` : mesHasta === 12 ? 'año completo' : `acumulado enero–${MESES[mesHasta - 1].toLowerCase()}`} />
             )}
             {tab === 'mensual' && (
               <EvolucionMensual years={years} meses={mesesByYear} limite={limite}
                 centro={centroSel ? centroLabel(centroSel) : 'Todos los centros'} inventarioIncluido={incluirInv} />
             )}
-            {tab === 'formulas' && <Formulas t={t} />}
+            {tab === 'formulas' && <Formulas t={t} periodo={periodo} />}
           </section>
         </div>
       </div>
@@ -402,25 +430,32 @@ function EstadoCarga() {
   );
 }
 
-function Meta({ icon: Icon, label, value, highlight, title }: { icon: LucideIcon; label: string; value: string; highlight?: boolean; title?: string }) {
+/** Tarjeta de indicador: etiqueta · cifra · pie opcional. */
+function Tile({ icon: Icon, label, value, children }: { icon: LucideIcon; label: string; value: string; children?: ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1.5" title={title}>
-      <Icon className={`h-3.5 w-3.5 ${highlight ? 'text-brand-600' : 'text-slate-400'}`} />
-      <span className={highlight ? 'font-semibold text-brand-700' : 'font-medium text-slate-700'}>{label}:</span>
-      <span className="tabular-nums">{value}</span>
-    </span>
+    <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white px-5 py-3.5 shadow-sm">
+      <div>
+        <p className="flex items-center gap-1.5 text-sm font-medium text-slate-500">
+          <Icon className="h-4 w-4 shrink-0 text-brand-600" />
+          {label}
+        </p>
+        <p className="mt-1 truncate text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">{value}</p>
+      </div>
+      {children && <div className="mt-2 border-t border-slate-100 pt-2">{children}</div>}
+    </div>
   );
 }
 
-function Kpi({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string; sub: ReactNode }) {
+/** Un total dividido en partes: barra fina de 8 px con separación de 2 px (la leyenda con nombres y montos va al lado). */
+function BarraPartes({ partes }: { partes: { nombre: string; valor: number; clase: string }[] }) {
+  const total = partes.reduce((a, x) => a + Math.max(0, x.valor), 0);
+  if (total <= 0) return null;
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-slate-500">{label}</p>
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-brand-600"><Icon className="h-4 w-4" /></span>
-      </div>
-      <p className="mt-2 truncate text-2xl font-bold tabular-nums tracking-tight text-slate-900 sm:text-[26px]">{value}</p>
-      <p className="mt-1.5 text-xs text-slate-500">{sub}</p>
+    <div className="flex h-2 gap-0.5 overflow-hidden rounded-full" role="img" aria-label={partes.map((x) => `${x.nombre} ${pct(x.valor / total, 1)}`).join(', ')}>
+      {partes.filter((x) => x.valor > 0).map((x) => (
+        <div key={x.nombre} className={`${x.clase} first:rounded-l-full last:rounded-r-full`} style={{ width: `${(x.valor / total) * 100}%` }}
+          title={`${x.nombre}: ${money(x.valor)} (${pct(x.valor / total, 1)})`} />
+      ))}
     </div>
   );
 }
@@ -478,11 +513,16 @@ function BarraComposicion({ t }: { t: YearTotals }) {
 }
 
 /* ---------------- Benchmarking ---------------- */
-function Benchmarking({ t, diagnostics, benchmarks }: { t: YearTotals; diagnostics: ReturnType<typeof computeDiagnostics>; benchmarks: ReturnType<typeof computeBenchmarks> }) {
+function Benchmarking({ t, diagnostics, benchmarks, periodo, vista, centro }: { t: YearTotals; diagnostics: ReturnType<typeof computeDiagnostics>; benchmarks: ReturnType<typeof computeBenchmarks>; periodo: string; vista: 'acumulado' | 'mes'; centro: string | null }) {
+  const [ayuda, setAyuda] = useState<string | null>(null); // indicador cuyo cálculo se muestra
+  const alternar = (param: string) => setAyuda((a) => (a === param ? null : param));
+  // Posición del punto en la curva. Eje X: inversión (prevención + evaluación) sobre el CoQ, de 0 % a 100 %.
+  // Eje Y: CoQ sobre ventas; el tope se ajusta al valor actual (o a 3 veces la meta) para que el punto nunca quede acotado.
   const prevShare = t.total > 0 ? t.inversion / t.total : 0;
-  const x = Math.min(370, Math.max(40, prevShare * 320 + 40));
+  const x = 40 + Math.min(1, Math.max(0, prevShare)) * 330;
   const coq = t.sales > 0 ? t.total / t.sales : 0;
-  const y = Math.min(145, Math.max(25, 150 - coq * 800));
+  const coqTope = Math.max(coq, BENCHMARKS.total_coq_sales * 3, 0.0001);
+  const y = 150 - (Math.max(0, coq) / coqTope) * 120;
 
   return (
     <div className="space-y-6">
@@ -521,7 +561,7 @@ function Benchmarking({ t, diagnostics, benchmarks }: { t: YearTotals; diagnosti
       )}
 
       {/* Curva de Juran */}
-      <Panel title="Curva de optimización Q-COST" subtitle="Posición del año frente al modelo de costo total de calidad" icon={TrendingDown}>
+      <Panel title="Curva de optimización" subtitle="Esquema ilustrativo del modelo de costo total de calidad; el punto marca la posición del periodo seleccionado" icon={TrendingDown}>
         <div className="mb-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-600">
           <span className="flex items-center gap-2"><i className="h-0.5 w-4 rounded bg-rose-500" />Costos de fallas</span>
           <span className="flex items-center gap-2"><i className="h-0.5 w-4 rounded bg-emerald-500" />Costos de prevención</span>
@@ -530,8 +570,8 @@ function Benchmarking({ t, diagnostics, benchmarks }: { t: YearTotals; diagnosti
         <svg viewBox="0 0 400 180" className="h-auto w-full" role="img" aria-label="Curva de Juran del costo de calidad">
           <line x1="30" y1="150" x2="380" y2="150" stroke="#CBD5E1" strokeWidth="1.5" />
           <line x1="30" y1="150" x2="30" y2="20" stroke="#CBD5E1" strokeWidth="1.5" />
-          <text x="205" y="172" textAnchor="middle" fill="#64748B" fontSize="9" fontWeight="600">Nivel de calidad / inversión</text>
-          <text x="12" y="85" textAnchor="middle" fill="#64748B" fontSize="9" fontWeight="600" transform="rotate(-90 12,85)">Costo (USD)</text>
+          <text x="205" y="172" textAnchor="middle" fill="#64748B" fontSize="9" fontWeight="600">Inversión (prevención + evaluación) / CoQ</text>
+          <text x="12" y="85" textAnchor="middle" fill="#64748B" fontSize="9" fontWeight="600" transform="rotate(-90 12,85)">CoQ / Ventas</text>
           <path d="M 30 25 Q 150 140 380 145" fill="none" stroke="#F43F5E" strokeWidth="2" opacity="0.45" />
           <path d="M 30 145 Q 250 140 380 35" fill="none" stroke="#10B981" strokeWidth="2" opacity="0.45" />
           <path d="M 30 148 Q 200 70 380 148" fill="none" stroke="#0155B8" strokeWidth="3" strokeDasharray="7 4" />
@@ -542,6 +582,9 @@ function Benchmarking({ t, diagnostics, benchmarks }: { t: YearTotals; diagnosti
             <text y="-16" textAnchor="middle" fill="#fff" fontSize="9" fontWeight="700">{t.anio}</text>
           </g>
         </svg>
+        <p className="mt-3 text-center text-xs text-slate-600">
+          {periodo}: inversión / CoQ <b className="tabular-nums text-slate-800">{pct(prevShare, 1)}</b> · CoQ / Ventas <b className="tabular-nums text-slate-800">{pct(coq)}</b>
+        </p>
         <div className="mt-4 grid grid-cols-3 border-t border-slate-100 pt-3 text-center text-[11px] font-medium text-slate-500">
           <span>Zona reactiva</span>
           <span className="font-semibold text-brand-700">Óptimo económico</span>
@@ -550,7 +593,20 @@ function Benchmarking({ t, diagnostics, benchmarks }: { t: YearTotals; diagnosti
       </Panel>
 
       {/* Tabla de cumplimiento */}
-      <Panel title="Cumplimiento frente a clase mundial" icon={Search}>
+      <Panel title="Cumplimiento frente a clase mundial" subtitle="Pulsa el icono ⓘ de cada indicador para ver cómo se calcula" icon={Search}
+        action={
+          <div className="flex flex-col items-end gap-1.5" aria-label="Periodo que se está observando">
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm">
+              <CalendarRange className="h-4 w-4" />
+              {periodo}
+            </span>
+            <span className="flex flex-wrap justify-end gap-1.5 text-[11px] font-medium text-slate-600">
+              <span className="rounded-full bg-slate-100 px-2 py-0.5">{vista === 'mes' ? 'Mes individual' : 'Acumulado'}</span>
+              {centro && <span className="rounded-full bg-slate-100 px-2 py-0.5">{centro}</span>}
+              <span className="rounded-full bg-slate-100 px-2 py-0.5">{t.inventarioIncluido ? 'Con inventario' : 'Sin inventario'}</span>
+            </span>
+          </div>
+        }>
         {/* Escritorio: tabla */}
         <div className="hidden overflow-x-auto sm:block">
           <table className="w-full text-left text-sm">
@@ -564,12 +620,22 @@ function Benchmarking({ t, diagnostics, benchmarks }: { t: YearTotals; diagnosti
             </thead>
             <tbody className="divide-y divide-slate-100">
               {benchmarks.map((b) => (
-                <tr key={b.param} className="hover:bg-slate-50/70">
-                  <td className="py-3 pr-3"><p className="font-medium text-slate-800">{b.param}</p><p className="text-xs text-slate-500">{b.desc}</p></td>
-                  <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-900">{b.actual}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-brand-700">{b.world}</td>
-                  <td className="py-3 pl-3 text-right"><Chip status={b.status} /></td>
-                </tr>
+                <Fragment key={b.param}>
+                  <tr className={`hover:bg-slate-50/70 ${ayuda === b.param ? 'bg-slate-50/70' : ''}`}>
+                    <td className="py-3 pr-3">
+                      <div className="flex items-start gap-2">
+                        <div><p className="font-medium text-slate-800">{b.param}</p><p className="text-xs text-slate-500">{b.desc}</p></div>
+                        <BotonAyuda abierto={ayuda === b.param} onClick={() => alternar(b.param)} />
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-900">{b.actual}</td>
+                    <td className="px-3 py-3 text-right tabular-nums text-brand-700">{b.world}</td>
+                    <td className="py-3 pl-3 text-right"><Chip status={b.status} /></td>
+                  </tr>
+                  {ayuda === b.param && (
+                    <tr className="bg-slate-50/70"><td colSpan={4} className="px-1 pb-4 pt-0"><CalculoAyuda b={b} /></td></tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -579,7 +645,10 @@ function Benchmarking({ t, diagnostics, benchmarks }: { t: YearTotals; diagnosti
           {benchmarks.map((b) => (
             <div key={b.param} className="rounded-lg border border-slate-200 p-3">
               <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-medium text-slate-800">{b.param}</p>
+                <div className="flex items-start gap-2">
+                  <p className="text-sm font-medium text-slate-800">{b.param}</p>
+                  <BotonAyuda abierto={ayuda === b.param} onClick={() => alternar(b.param)} />
+                </div>
                 <Chip status={b.status} />
               </div>
               <p className="mt-0.5 text-xs text-slate-500">{b.desc}</p>
@@ -587,10 +656,57 @@ function Benchmarking({ t, diagnostics, benchmarks }: { t: YearTotals; diagnosti
                 <span><span className="text-xs text-slate-500">Actual </span><b className="tabular-nums">{b.actual}</b></span>
                 <span><span className="text-xs text-slate-500">Meta </span><b className="tabular-nums text-brand-700">{b.world}</b></span>
               </div>
+              {ayuda === b.param && <div className="mt-3"><CalculoAyuda b={b} /></div>}
             </div>
           ))}
         </div>
       </Panel>
+    </div>
+  );
+}
+
+function BotonAyuda({ abierto, onClick }: { abierto: boolean; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} aria-expanded={abierto} aria-label="Ver cómo se calcula este indicador" title="Ver cómo se calcula"
+      className={`mt-0.5 shrink-0 rounded-full p-0.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
+        abierto ? 'bg-brand-600 text-white' : 'text-brand-600 hover:bg-brand-50'
+      }`}>
+      <Info className="h-4 w-4" />
+    </button>
+  );
+}
+
+/** Ayuda visual: muestra numerador ÷ denominador = resultado con los importes reales del periodo. */
+function CalculoAyuda({ b }: { b: ReturnType<typeof computeBenchmarks>[number] }) {
+  const c = b.calculo;
+  const ok = b.status === 'success';
+  return (
+    <div className="rounded-lg border border-brand-100 bg-white p-4">
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Cómo se calcula</p>
+      <div className="flex flex-col items-stretch gap-2 lg:flex-row lg:items-center">
+        <div className="flex-1 rounded-lg border border-brand-100 bg-brand-50/60 p-3">
+          <p className="text-[11px] font-medium text-slate-500">Numerador</p>
+          <p className="text-lg font-bold tabular-nums text-brand-700">{money(c.num)}</p>
+          <p className="text-xs text-slate-600">{c.numLabel}</p>
+        </div>
+        <span className="text-center text-xl font-bold text-slate-400">÷</span>
+        <div className="flex-1 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <p className="text-[11px] font-medium text-slate-500">Denominador</p>
+          <p className="text-lg font-bold tabular-nums text-slate-800">{money(c.den)}</p>
+          <p className="text-xs text-slate-600">{c.denLabel}</p>
+        </div>
+        <span className="text-center text-xl font-bold text-slate-400">=</span>
+        <div className={`flex-1 rounded-lg border p-3 ${ok ? 'border-emerald-200 bg-emerald-50' : 'border-rose-200 bg-rose-50'}`}>
+          <p className="text-[11px] font-medium text-slate-500">Resultado</p>
+          <p className={`text-lg font-bold tabular-nums ${ok ? 'text-emerald-700' : 'text-rose-700'}`}>{b.actual}</p>
+          <p className="text-xs text-slate-600">Cumple si es {c.regla}</p>
+        </div>
+      </div>
+      {c.fuentes && (
+        <p className="mt-3 text-xs text-slate-500">
+          <span className="font-medium text-slate-600">Fuentes del cubo: </span>{c.fuentes.join(' + ')}
+        </p>
+      )}
     </div>
   );
 }
@@ -627,8 +743,9 @@ function Comparativa({ years, totals, current, onPick, periodo }: { years: numbe
                 <dl className="mt-3 space-y-1.5 text-sm">
                   <Fila k="Costo total" v={money(t.total)} strong />
                   <Fila k="Prevención" v={money(t.prevencion)} />
+                  <Fila k="Evaluación" v={money(t.evaluacion)} />
                   <Fila k="Fallas" v={money(t.perdida)} cls="text-rose-700" />
-                  <Fila k="Inventarios (nuevo)" v={y >= INVENTARIO_DESDE && t.inventario > 0 ? money(t.inventario) : 'sin dato'} cls="text-gold-700" />
+                  <Fila k="Inventarios (prom. mensual)" v={t.inventario > 0 ? money(t.inventario) : 'sin dato'} cls="text-gold-700" />
                 </dl>
                 <div className="mt-3 border-t border-slate-100 pt-3 text-xs">
                   {i === 0 ? (
@@ -690,7 +807,7 @@ function Leyenda() {
 }
 
 /* ---------------- Fórmulas ---------------- */
-function Formulas({ t }: { t: YearTotals }) {
+function Formulas({ t, periodo }: { t: YearTotals; periodo: string }) {
   const r = (a: number, b: number) => (b > 0 ? a / b : 0);
   const idx = t.perdida > 0 ? t.inversion / t.perdida : 0;
   const cards = [
@@ -700,8 +817,8 @@ function Formulas({ t }: { t: YearTotals }) {
     { key: 'fallasExternas' as const, name: 'Fallas externas (FE)', desc: 'Defectos detectados por el cliente tras la entrega.' },
   ];
   return (
-    <Panel title="Fórmulas de cálculo Q-COST 360" subtitle="Modelo PAF (prevención, evaluación, fallas) · ISO 9004" icon={Calculator}
-      action={<span className="hidden shrink-0 rounded-md bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-inset ring-brand-100 sm:inline">Cifras {t.anio}</span>}>
+    <Panel title="Fórmulas de cálculo" subtitle="Modelo PAF (prevención, evaluación, fallas)" icon={Calculator}
+      action={<span className="hidden shrink-0 rounded-md bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-inset ring-brand-100 sm:inline">Cifras {periodo}</span>}>
       <div className="space-y-4">
         <Block n="1" title="Costo total de la calidad (CoQ)" value={money(t.total)}
           formula="CoQ = Prevención + Evaluación + Fallas internas + Fallas externas"
@@ -738,8 +855,8 @@ function Formulas({ t }: { t: YearTotals }) {
         <p className="flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
           {t.inventarioIncluido
-            ? `El CoQ incluye la fuente Control de inventarios (nueva desde ${INVENTARIO_DESDE}).`
-            : `El CoQ no incluye la fuente Control de inventarios (nueva desde ${INVENTARIO_DESDE}). Puede activarla en el panel de composición.`}
+            ? 'El CoQ incluye la fuente Control de inventarios como promedio mensual del periodo (es un saldo, no se suma mes a mes).'
+            : 'El CoQ no incluye la fuente Control de inventarios. Puede activarla en el panel de composición.'}
         </p>
       </div>
     </Panel>
@@ -784,11 +901,6 @@ function FuenteDetalle({ f }: { f: FuenteTotal }) {
         <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${abierta ? 'rotate-90' : ''}`} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-medium text-slate-700" title={f.fuente}>{f.fuente}</span>
-          {f.fuente === FUENTE_INVENTARIO && (
-            <span className="block text-[11px] font-medium text-amber-700">
-              Nuevo {INVENTARIO_DESDE} · {f.excluido ? 'no incluido en el CoQ' : 'incluido en el CoQ'}
-            </span>
-          )}
           <span className="block text-[11px] text-slate-400">{f.procesos.length} {f.procesos.length === 1 ? 'proceso' : 'procesos'}</span>
         </span>
         <span className={`shrink-0 text-xs font-semibold tabular-nums ${f.excluido ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{money(f.importe)}</span>
@@ -847,10 +959,12 @@ const METRICAS: { key: MetricaKey; label: string; tipo: 'usd' | 'pct'; mejor: 'm
 ];
 const COLORES_ANIO = ['#0155B8', '#F5A623', '#94A3B8', '#10B981', '#8B5CF6']; // año más reciente primero
 
-type Acum = Omit<MesTotals, 'mes'>;
-const valorDe = (m: Acum, key: MetricaKey) => (key === 'ratio' ? (m.sales > 0 ? m.total / m.sales : 0) : m[key]);
-const vacio = (): Acum => ({ sales: 0, prevencion: 0, evaluacion: 0, fallasInternas: 0, fallasExternas: 0, total: 0 });
-const sumar = (a: Acum, m: Acum) => {
+type Acum = Omit<MesTotals, 'mes'> & { mesesInv: number }; // mesesInv: meses con dato de Control de inventarios
+const valorDe = (m: Omit<MesTotals, 'mes'>, key: MetricaKey) => (key === 'ratio' ? (m.sales > 0 ? m.total / m.sales : 0) : m[key]);
+const vacio = (): Acum => ({ sales: 0, prevencion: 0, evaluacion: 0, fallasInternas: 0, fallasExternas: 0, total: 0, inventario: 0, mesesInv: 0 });
+const sumar = (a: Acum, m: Omit<MesTotals, 'mes'>) => {
+  if (m.inventario !== 0) a.mesesInv++;
+  a.inventario += m.inventario;
   a.sales += m.sales; a.prevencion += m.prevencion; a.evaluacion += m.evaluacion;
   a.fallasInternas += m.fallasInternas; a.fallasExternas += m.fallasExternas; a.total += m.total;
 };
@@ -877,7 +991,7 @@ function EvolucionMensual({ years, meses, limite, centro, inventarioIncluido }: 
     const acc = vacio();
     const valores: (number | null)[] = (meses[yr] ?? []).map((m, i) => {
       if (i + 1 > mesMax(yr)) return null;
-      if (modo === 'acumulado') { sumar(acc, m); return valorDe(acc, metrica); }
+      if (modo === 'acumulado') { sumar(acc, m); return valorDe(conInventarioPromedio(acc, acc.mesesInv), metrica); }
       return valorDe(m, metrica);
     });
     return { yr, valores };
@@ -888,7 +1002,7 @@ function EvolucionMensual({ years, meses, limite, centro, inventarioIncluido }: 
   const hastaLimite = useMemo(() => years.map((yr) => {
     const acc = vacio();
     (meses[yr] ?? []).forEach((m, i) => { if (i + 1 <= limMes && i + 1 <= mesMax(yr)) sumar(acc, m); });
-    return valorDe(acc, metrica);
+    return valorDe(conInventarioPromedio(acc, acc.mesesInv), metrica);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [years, meses, metrica, limite]);
 
@@ -1006,13 +1120,34 @@ function EvolucionMensual({ years, meses, limite, centro, inventarioIncluido }: 
       </Panel>
 
       <Panel title={`${cfg.label} por mes`} subtitle={`${modo === 'acumulado' ? 'Acumulado desde enero' : 'Valor de cada mes'} · variación frente al mismo mes del año anterior`} icon={Layers}>
+        {/* Leyenda: cómo leer los porcentajes de colores */}
+        <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50/70 p-3 text-xs text-slate-600">
+          <p className="mb-2 font-semibold text-slate-700">Cómo leer las variaciones</p>
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+            <span className="inline-flex items-center gap-1.5"><TrendingUp className="h-3.5 w-3.5 text-slate-500" /><TrendingDown className="h-3.5 w-3.5 text-slate-500" /> La flecha indica si el valor <b>subió</b> o <b>bajó</b> frente al mismo mes del año anterior</span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5">
+            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-emerald-500" /><b className="text-emerald-700">Verde</b> = cambio favorable</span>
+            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-500" /><b className="text-rose-600">Rojo</b> = cambio desfavorable</span>
+            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-400" /><b className="text-slate-600">Gris</b> = sin juicio de valor</span>
+          </div>
+          <p className="mt-2 text-slate-500">
+            En <b>{cfg.label}</b>:{' '}
+            {cfg.mejor === 'menor' && 'un valor menor es mejor, por eso bajar sale en verde y subir en rojo.'}
+            {cfg.mejor === 'mayor' && 'un valor mayor es mejor, por eso subir sale en verde y bajar en rojo.'}
+            {cfg.mejor === 'neutral' && 'no se califica como favorable o desfavorable, así que las variaciones salen en gris.'}
+          </p>
+        </div>
         <div className="-mx-1 overflow-x-auto px-1">
           <table className="w-full min-w-[420px] text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-xs text-slate-500">
                 <th className="sticky left-0 bg-white py-2.5 pr-3 font-medium">Mes</th>
-                {years.map((yr) => (
-                  <th key={yr} className="px-3 py-2.5 text-right font-semibold" style={{ color: colorDe(yr) === '#94A3B8' ? '#64748B' : colorDe(yr) }}>{yr}</th>
+                {years.map((yr, idx) => (
+                  <th key={yr} className="px-3 py-2.5 text-right font-semibold" style={{ color: colorDe(yr) === '#94A3B8' ? '#64748B' : colorDe(yr) }}>
+                    {yr}
+                    <span className="block text-[10px] font-normal text-slate-400">{idx > 0 ? `variación vs ${years[idx - 1]}` : 'año base'}</span>
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -1054,7 +1189,7 @@ function EvolucionMensual({ years, meses, limite, centro, inventarioIncluido }: 
           <span>
             La última fila compara el mismo tramo (enero a {MESES[limMes - 1].toLowerCase()}) en todos los años.
             {cfg.tipo === 'pct' && ' La variación del ratio se expresa en puntos porcentuales (pp).'}
-            {inventarioIncluido && ` Los valores de ${INVENTARIO_DESDE} incluyen Control de inventarios, que no existe en años anteriores: desactívelo en el panel de composición para una comparación homogénea.`}
+            {inventarioIncluido && ' Control de inventarios es un saldo mensual: mes a mes se muestra el valor de cada mes y en los acumulados entra como promedio, no como suma.'}
           </span>
         </p>
       </Panel>
